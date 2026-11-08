@@ -8291,20 +8291,16 @@ impl TerminalView {
         else {
             return;
         };
-        let Some(shell_type) = self
-            .sessions
-            .as_ref(ctx)
-            .get(session_id)
-            .map(|session| session.shell().shell_type())
-        else {
+        let Some(session) = self.sessions.as_ref(ctx).get(session_id) else {
             return;
         };
-        let Some(expanded) = History::shell_expanded_command(typed, shell_reported, shell_type)
+        let shell_type = session.shell().shell_type();
+        let Some(expanded) =
+            History::shell_expanded_command(typed, shell_reported, shell_type).map(str::to_owned)
         else {
             return;
         };
 
-        let expanded = expanded.to_owned();
         History::handle(ctx).update(ctx, |history, _| {
             history.replace_command(session_id, start_ts, typed, expanded);
         });

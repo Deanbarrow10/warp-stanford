@@ -965,18 +965,7 @@ impl History {
             ReadHistoryFileState::InProgress {
                 session_commands_to_append,
                 ..
-            } => {
-                // Duplicates are removed when the history file finishes loading.
-                if let Some(entry) = find_session_command(
-                    session_commands_to_append,
-                    session_id,
-                    command_start_ts,
-                    original,
-                ) {
-                    Arc::make_mut(entry).command = replacement;
-                }
-                return;
-            }
+            } => session_commands_to_append,
             ReadHistoryFileState::Done => {
                 let Some(commands) = self.session_commands.get_mut(shell_host) else {
                     return;
@@ -985,70 +974,39 @@ impl History {
             }
         };
 
-        let Some(entry) =
-            find_session_command(session_commands, session_id, command_start_ts, original)
-        else {
+        let Some(index) = session_commands.iter().rposition(|entry| {
+            entry.session_id == Some(session_id)
+                && entry.start_ts.is_some_and(|start_ts| {
+                    start_ts.timestamp_millis() == command_start_ts.timestamp_millis()
+                })
+                && entry.command.trim() == original.trim()
+        }) else {
             return;
         };
-        Arc::make_mut(entry).command = replacement;
+        Arc::make_mut(&mut session_commands[index]).command = replacement;
 
-        self.skip_older_duplicates_of_replaced_command(session_id, command_start_ts);
-    }
-
-    /// `append_commands` hides older entries with the same text as a new command. A replaced
-    /// command needs the same treatment; otherwise `echo hello` followed by `!!` would be listed
-    /// twice.
-    fn skip_older_duplicates_of_replaced_command(
-        &mut self,
-        session_id: SessionId,
-        command_start_ts: DateTime<Local>,
-    ) {
-        let Some(shell_host) = self.session_id_to_shell_host.get(&session_id) else {
-            return;
-        };
+        // Hide older entries with the same text, as `append_commands` does. Otherwise `echo hello`
+        // followed by `!!` would be listed twice. While the history file is still loading, these
+        // lists aren't set yet and duplicates are removed once it has been read.
         let (Some(history_file_commands), Some(session_commands)) = (
             self.history_file_commands.get(shell_host),
             self.session_commands.get(shell_host),
         ) else {
             return;
         };
-
-        let all_commands = || history_file_commands.iter().chain(session_commands.iter());
-        let replaced = all_commands().enumerate().filter(|(_, entry)| {
-            entry.session_id == Some(session_id) && is_started_at(entry, command_start_ts)
-        });
-        let Some((replaced_index, replaced)) = replaced.last() else {
-            return;
-        };
-
+        let replaced_index = history_file_commands.len() + index;
+        let replaced_command = &session_commands[index].command;
         let skip_indices = self.session_skip_indices.entry(session_id).or_default();
-        for (index, entry) in all_commands().enumerate() {
-            if index != replaced_index && entry.command == replaced.command {
-                skip_indices.insert(index);
+        for (idx, entry) in history_file_commands
+            .iter()
+            .chain(session_commands)
+            .enumerate()
+        {
+            if idx != replaced_index && entry.command == *replaced_command {
+                skip_indices.insert(idx);
             }
         }
     }
-}
-
-fn is_started_at(entry: &HistoryEntry, start_ts: DateTime<Local>) -> bool {
-    entry
-        .start_ts
-        .is_some_and(|ts| ts.timestamp_millis() == start_ts.timestamp_millis())
-}
-
-/// Finds the most recent command from `session_id` that started at `start_ts` and whose text is
-/// still `original`.
-fn find_session_command<'a>(
-    commands: &'a mut [Arc<HistoryEntry>],
-    session_id: SessionId,
-    start_ts: DateTime<Local>,
-    original: &str,
-) -> Option<&'a mut Arc<HistoryEntry>> {
-    commands.iter_mut().rev().find(|entry| {
-        entry.session_id == Some(session_id)
-            && is_started_at(entry, start_ts)
-            && entry.command.trim() == original.trim()
-    })
 }
 
 #[cfg(test)]

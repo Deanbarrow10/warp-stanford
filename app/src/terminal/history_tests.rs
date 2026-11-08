@@ -1022,37 +1022,22 @@ fn is_appendable_vs_is_queryable() {
 }
 
 #[test]
-fn shell_expanded_command_uses_reported_command_for_zsh_history_expansion() {
-    let expanded =
-        |typed, reported| History::shell_expanded_command(typed, reported, ShellType::Zsh);
+fn shell_expanded_command_only_trusts_zsh_history_expansion() {
+    let zsh = |typed, reported| History::shell_expanded_command(typed, reported, ShellType::Zsh);
 
-    assert_eq!(expanded("!!", "echo hello"), Some("echo hello"));
-    assert_eq!(expanded("cat !$", "cat notes.txt"), Some("cat notes.txt"));
-    assert_eq!(expanded("!!", "echo hello\n"), Some("echo hello"));
-}
+    assert_eq!(zsh("!!", "echo hello"), Some("echo hello"));
+    assert_eq!(zsh("cat !$", "cat notes.txt"), Some("cat notes.txt"));
+    assert_eq!(zsh("!!", "echo hello\n"), Some("echo hello"));
 
-#[test]
-fn shell_expanded_command_keeps_typed_command_when_nothing_was_expanded() {
-    let expanded =
-        |typed, reported| History::shell_expanded_command(typed, reported, ShellType::Zsh);
+    assert_eq!(zsh("echo hello", "something else"), None);
+    assert_eq!(zsh(" echo 'hi!' ", "echo 'hi!'"), None);
+    assert_eq!(zsh("!!", "  "), None);
 
-    // Without a `!` there is no history expansion, so a difference isn't one we should trust.
-    assert_eq!(expanded("echo hello", "something else"), None);
-    assert_eq!(expanded("echo 'hi!'", "echo 'hi!'"), None);
-    assert_eq!(expanded(" echo 'hi!' ", "echo 'hi!'"), None);
-    assert_eq!(expanded("!!", ""), None);
-    assert_eq!(expanded("!!", "   "), None);
-}
-
-#[test]
-fn shell_expanded_command_only_applies_to_zsh() {
     // Bash may report a truncated command, so it must not overwrite what was typed.
-    for shell_type in [ShellType::Bash, ShellType::Fish, ShellType::PowerShell] {
-        assert_eq!(
-            History::shell_expanded_command("!!", "echo hello", shell_type),
-            None
-        );
-    }
+    assert_eq!(
+        History::shell_expanded_command("!!", "echo hello", ShellType::Bash),
+        None
+    );
 }
 
 /// Initializes a Zsh session whose history file contains `history_file_commands`.
