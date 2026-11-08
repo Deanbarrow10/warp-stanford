@@ -925,6 +925,130 @@ impl History {
             }
         }
     }
+
+    /// Returns the command to store in history when the shell expanded what the user typed before
+    /// running it (e.g. `!!`), or `None` if the typed command should be kept.
+    ///
+    /// This is limited to Zsh because Bash's preexec command may be truncated at the first job
+    /// control operator, which would replace a complete command with a partial one.
+    pub fn shell_expanded_command<'a>(
+        typed: &str,
+        shell_reported: &'a str,
+        shell_type: ShellType,
+    ) -> Option<&'a str> {
+        let shell_reported = shell_reported.trim();
+        (shell_type == ShellType::Zsh
+            && typed.contains('!')
+            && !shell_reported.is_empty()
+            && shell_reported != typed.trim())
+        .then_some(shell_reported)
+    }
+
+    /// Replaces the text of the session command that started at `command_start_ts`, provided it
+    /// still matches `original`. Used when the shell ran something other than what was typed.
+    pub fn replace_command(
+        &mut self,
+        session_id: SessionId,
+        command_start_ts: DateTime<Local>,
+        original: &str,
+        replacement: String,
+    ) {
+        let Some(shell_host) = self.session_id_to_shell_host.get(&session_id) else {
+            log::warn!("ShellHost should be populated in the map for all bootstrapped sessions.");
+            return;
+        };
+        let session_commands = match self
+            .read_history_file_state
+            .get_mut(shell_host)
+            .expect("ReadHistoryFileState should exist for session.")
+        {
+            ReadHistoryFileState::InProgress {
+                session_commands_to_append,
+                ..
+            } => {
+                // Duplicates are removed when the history file finishes loading.
+                if let Some(entry) = find_session_command(
+                    session_commands_to_append,
+                    session_id,
+                    command_start_ts,
+                    original,
+                ) {
+                    Arc::make_mut(entry).command = replacement;
+                }
+                return;
+            }
+            ReadHistoryFileState::Done => {
+                let Some(commands) = self.session_commands.get_mut(shell_host) else {
+                    return;
+                };
+                commands
+            }
+        };
+
+        let Some(entry) =
+            find_session_command(session_commands, session_id, command_start_ts, original)
+        else {
+            return;
+        };
+        Arc::make_mut(entry).command = replacement;
+
+        self.skip_older_duplicates_of_replaced_command(session_id, command_start_ts);
+    }
+
+    /// `append_commands` hides older entries with the same text as a new command. A replaced
+    /// command needs the same treatment; otherwise `echo hello` followed by `!!` would be listed
+    /// twice.
+    fn skip_older_duplicates_of_replaced_command(
+        &mut self,
+        session_id: SessionId,
+        command_start_ts: DateTime<Local>,
+    ) {
+        let Some(shell_host) = self.session_id_to_shell_host.get(&session_id) else {
+            return;
+        };
+        let (Some(history_file_commands), Some(session_commands)) = (
+            self.history_file_commands.get(shell_host),
+            self.session_commands.get(shell_host),
+        ) else {
+            return;
+        };
+
+        let all_commands = || history_file_commands.iter().chain(session_commands.iter());
+        let replaced = all_commands().enumerate().filter(|(_, entry)| {
+            entry.session_id == Some(session_id) && is_started_at(entry, command_start_ts)
+        });
+        let Some((replaced_index, replaced)) = replaced.last() else {
+            return;
+        };
+
+        let skip_indices = self.session_skip_indices.entry(session_id).or_default();
+        for (index, entry) in all_commands().enumerate() {
+            if index != replaced_index && entry.command == replaced.command {
+                skip_indices.insert(index);
+            }
+        }
+    }
+}
+
+fn is_started_at(entry: &HistoryEntry, start_ts: DateTime<Local>) -> bool {
+    entry
+        .start_ts
+        .is_some_and(|ts| ts.timestamp_millis() == start_ts.timestamp_millis())
+}
+
+/// Finds the most recent command from `session_id` that started at `start_ts` and whose text is
+/// still `original`.
+fn find_session_command<'a>(
+    commands: &'a mut [Arc<HistoryEntry>],
+    session_id: SessionId,
+    start_ts: DateTime<Local>,
+    original: &str,
+) -> Option<&'a mut Arc<HistoryEntry>> {
+    commands.iter_mut().rev().find(|entry| {
+        entry.session_id == Some(session_id)
+            && is_started_at(entry, start_ts)
+            && entry.command.trim() == original.trim()
+    })
 }
 
 #[cfg(test)]
