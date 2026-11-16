@@ -774,6 +774,10 @@ pub fn test_preexec_reports_shell_expanded_command_in_after_block_started_event(
         .build();
 
     block.start();
+    for c in "!!".chars() {
+        block.input(c);
+    }
+    // Zsh passes preexec the line after history expansion, which Warp's hook sends as is.
     block.preexec(PreexecValue {
         command: "echo hello".to_owned(),
         session_id: None,
@@ -784,12 +788,14 @@ pub fn test_preexec_reports_shell_expanded_command_in_after_block_started_event(
         pin!(events_rx).find(|event| matches!(event, Event::AfterBlockStarted { .. })),
     );
     let Some(Event::AfterBlockStarted {
+        command,
         shell_reported_command,
         ..
     }) = event
     else {
         panic!("preexec should emit AfterBlockStarted");
     };
+    assert_eq!(command, "!!");
     assert_eq!(shell_reported_command, "echo hello");
 }
 

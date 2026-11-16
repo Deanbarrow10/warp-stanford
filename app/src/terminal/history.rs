@@ -945,7 +945,7 @@ impl History {
     }
 
     /// Replaces the text of the session command that started at `command_start_ts`, provided it
-    /// still matches `original`. Used when the shell ran something other than what was typed.
+    /// still matches `original`.
     pub fn replace_command(
         &mut self,
         session_id: SessionId,
