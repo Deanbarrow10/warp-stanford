@@ -14093,10 +14093,7 @@ impl Input {
             && self
                 .inline_history_menu_view
                 .as_ref(ctx)
-                .model()
-                .as_ref(ctx)
-                .selected_item()
-                .is_some()
+                .is_previewing_selection()
         {
             self.inline_history_menu_view
                 .update(ctx, |view, ctx| view.accept_selected_item(ctx));

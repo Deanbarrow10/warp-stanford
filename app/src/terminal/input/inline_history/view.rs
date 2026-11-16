@@ -163,11 +163,8 @@ pub struct InlineHistoryMenuView {
     pending_tab_switch_selection: Option<HistoryItemIdentity>,
     caller_supplied_tabs: bool,
     pending_initial_buffer_sync: bool,
-    /// Whether the input currently shows the selected row rather than the user's search text.
     is_previewing_selection: bool,
-    /// Whether the next selection should be left out of the input. Set when the user is typing a
-    /// search, so that the results don't overwrite what they typed.
-    skip_next_selection_preview: bool,
+    skip_selection_preview: bool,
 }
 
 impl InlineHistoryMenuView {
@@ -390,9 +387,9 @@ impl InlineHistoryMenuView {
                     });
                 }
             },
-            InlineMenuEvent::SelectedItem { .. } if me.skip_next_selection_preview => {
-                me.skip_next_selection_preview = false;
-            }
+            // While the user is typing a search, selections made by new results or tab switches
+            // would overwrite what they typed. Only their own navigation previews a row.
+            InlineMenuEvent::SelectedItem { .. } if me.skip_selection_preview => {}
             InlineMenuEvent::SelectedItem { item } => {
                 me.is_previewing_selection = true;
                 match item {
@@ -419,7 +416,6 @@ impl InlineHistoryMenuView {
                 ctx.emit(InlineHistoryMenuEvent::Close);
             }
             InlineMenuEvent::NoResults => {
-                me.skip_next_selection_preview = false;
                 ctx.emit(InlineHistoryMenuEvent::NoResults);
             }
             InlineMenuEvent::TabChanged => {
@@ -458,7 +454,7 @@ impl InlineHistoryMenuView {
             caller_supplied_tabs,
             pending_initial_buffer_sync: false,
             is_previewing_selection: false,
-            skip_next_selection_preview: false,
+            skip_selection_preview: false,
         }
     }
 
@@ -478,11 +474,13 @@ impl InlineHistoryMenuView {
         self.menu_view.as_ref(app).result_count()
     }
 
-    pub fn select_up(&self, ctx: &mut ViewContext<Self>) {
+    pub fn select_up(&mut self, ctx: &mut ViewContext<Self>) {
+        self.skip_selection_preview = false;
         self.menu_view.update(ctx, |v, ctx| v.select_up(ctx));
     }
 
-    pub fn select_down(&self, ctx: &mut ViewContext<Self>) {
+    pub fn select_down(&mut self, ctx: &mut ViewContext<Self>) {
+        self.skip_selection_preview = false;
         let should_close = self.menu_view.read(ctx, |v, _| {
             let result_count = v.result_count();
             let is_last_item_selected =
@@ -520,7 +518,7 @@ impl InlineHistoryMenuView {
         if self.current_query_text(ctx) == query_text {
             return;
         }
-        self.skip_next_selection_preview = true;
+        self.skip_selection_preview = true;
         let filters = self.model.as_ref(ctx).active_tab_filters();
         self.mixer.update(ctx, |mixer, ctx| {
             mixer.run_query(
@@ -535,7 +533,7 @@ impl InlineHistoryMenuView {
 
     fn open_with_current_buffer(&mut self, ctx: &mut ViewContext<Self>) {
         self.is_previewing_selection = false;
-        self.skip_next_selection_preview = false;
+        self.skip_selection_preview = false;
         let query_text = self.buffer_model.as_ref(ctx).current_value().to_owned();
         let filters = self.model.as_ref(ctx).active_tab_filters();
         self.mixer.update(ctx, |mixer, ctx| {
