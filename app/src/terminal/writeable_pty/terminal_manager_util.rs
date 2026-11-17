@@ -43,7 +43,7 @@ pub fn wire_up_pty_controller_with_surface<T: EventLoopSender, S: TerminalSurfac
     let surface_weak_handle = surface.downgrade();
     let model_clone = model.clone();
 
-    let model_for_history = model.clone();
+    let model_for_history = Arc::downgrade(&model);
     let sessions_for_history = sessions.downgrade();
     ctx.subscribe_to_model(model_events, move |_, event, ctx| {
         let TerminalModelEvent::AfterBlockStarted {
@@ -58,11 +58,14 @@ pub fn wire_up_pty_controller_with_surface<T: EventLoopSender, S: TerminalSurfac
         let Some(sessions) = sessions_for_history.upgrade(ctx) else {
             return;
         };
+        let Some(model) = model_for_history.upgrade() else {
+            return;
+        };
         record_shell_expanded_command(
             block_id,
             command,
             shell_reported_command,
-            &model_for_history,
+            &model,
             &sessions,
             ctx,
         );
